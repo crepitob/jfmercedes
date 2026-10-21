@@ -1,1 +1,71 @@
+name: Actualizar UMA CSJN
 
+on:
+  schedule:
+    # Se ejecuta todos los días a las 06:00 UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch: # Permite ejecutarlo manualmente desde GitHub si se desea
+
+jobs:
+  update-uma:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v3
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Instalar librerías
+        run: pip install requests beautifulsoup4
+
+      - name: Consultar CSJN y Actualizar JSON
+        run: |
+          python -c "
+          import requests, json, re, sys
+          from bs4 import BeautifulSoup
+
+          url = 'https://www.csjn.gov.ar/transparencia/uma-buscar'
+          headers = {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36',
+              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+              'X-Requested-With': 'XMLHttpRequest'
+          }
+          payload = {'anio': '2026'}
+
+          try:
+              r = requests.post(url, data=payload, headers=headers, timeout=15)
+              if r.status_code == 200:
+                  soup = BeautifulSoup(r.text, 'html.parser')
+                  filas = soup.find_all('tr')
+                  for fila in filas:
+                      cols = fila.find_all('td')
+                      if len(cols) >= 3:
+                          monto_txt = cols[1].text.strip()
+                          res_txt = cols[0].text.strip()
+                          match = re.search(r'[\d\.]+', monto_txt.replace('$', '').strip())
+                          if match:
+                              val_str = match.group().replace('.', '')
+                              valor_num = float(val_str)
+                              if valor_num > 10000:
+                                  data = {
+                                      'valor': valor_num,
+                                      'resolucion': res_txt,
+                                      'actualizado_el': requests.get('https://worldtimeapi.org/api/ip').json().get('datetime', '')
+                                  }
+                                  with open('uma.json', 'w', encoding='utf-8') as f:
+                                      json.dump(data, f, indent=2, ensure_ascii=False)
+                                  print('UMA actualizada correctamente:', valor_num)
+                                  sys.exit(0)
+          except Exception as e:
+              print('Error al consultar CSJN:', e)
+          "
+
+      - name: Guardar cambios en GitHub
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add uma.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update UMA [skip ci]" && git push)
